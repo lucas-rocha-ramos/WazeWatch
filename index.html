@@ -161,8 +161,8 @@
         let currentStepIndex = 0;
         let wakeLock = null;
         let lastSpokenInstruction = "";
-        let isNavigating = false; // Controle se o usuário apertou "Iniciar Rota"
-        let bestVoice = null; // Armazena a melhor voz encontrada
+        let isNavigating = false; 
+        let bestVoice = null; 
 
         // UI Elements
         const speedDisplay = document.getElementById('speedDisplay');
@@ -213,7 +213,7 @@
             if (wakeLock !== null) { wakeLock.release(); wakeLock = null; }
         }
 
-        // --- SISTEMA DE VOZ REALISTA (Web Speech API Otimizada) ---
+        // --- SISTEMA DE VOZ REALISTA ---
         function loadVoices() {
             if ('speechSynthesis' in window) {
                 const voices = window.speechSynthesis.getVoices();
@@ -339,6 +339,7 @@
             );
         }
 
+        // --- SISTEMA DE ROTAS CORRIGIDO PARA NÃO TRAVAR ---
         async function setDestinationAndRoute(destLatLng) {
             if (destinationMarker) map.removeLayer(destinationMarker);
             if (routeLayer) map.removeLayer(routeLayer);
@@ -356,15 +357,38 @@
             btnStartRoute.classList.remove('hidden'); 
             turnByTurnPanel.classList.add('hidden'); 
 
+            // Garante que a cor fique verde durante o carregamento
+            timeDisplay.classList.remove('text-red-400');
+            timeDisplay.classList.add('text-green-400');
             timeDisplay.innerText = "Calculando...";
             distanceDisplay.innerText = "";
 
+            // Cria um cronômetro de 10 segundos para forçar o cancelamento se travar
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+
             try {
-                const start = `${userPos.lng},${userPos.lat}`;
-                const end = `${destLatLng.lng},${destLatLng.lat}`;
+                // Formata precisamente as coordenadas para não gerar erro no servidor
+                const startLng = userPos.lng.toFixed(6);
+                const startLat = userPos.lat.toFixed(6);
+                const endLng = destLatLng.lng.toFixed(6);
+                const endLat = destLatLng.lat.toFixed(6);
                 
-                // MUDANÇA AQUI: Removido o &language=pt que estava quebrando o servidor OSRM
-                const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${start};${end}?overview=full&geometries=geojson&steps=true`);
+                const start = `${startLng},${startLat}`;
+                const end = `${endLng},${endLat}`;
+                
+                // Adicionado cache: no-store e um timestamp dinâmico (t=...) para que o navegador não entregue um cache falso
+                const url = `https://router.project-osrm.org/route/v1/driving/${start};${end}?overview=full&geometries=geojson&steps=true&t=${Date.now()}`;
+                
+                const response = await fetch(url, { 
+                    cache: 'no-store',
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId); // Limpa o cronômetro se deu certo
+
+                if (!response.ok) throw new Error("Servidor recusou a rota");
+
                 const data = await response.json();
 
                 if (data.routes && data.routes.length > 0) {
@@ -373,19 +397,31 @@
                     
                     map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
 
-                    routeSteps = route.legs[0].steps;
+                    routeSteps = route.legs[0].steps || [];
 
                     const distanceKm = (route.distance / 1000).toFixed(1);
                     const durationMin = Math.round(route.duration / 60);
                     distanceDisplay.innerText = `${distanceKm} km`;
                     timeDisplay.innerText = durationMin > 60 ? `${Math.floor(durationMin/60)}h ${durationMin%60}m` : `${durationMin} min`;
                 } else {
-                    // MUDANÇA AQUI: Adicionado tratamento para quando não encontra rota
-                    timeDisplay.innerText = "Rota não encontrada";
-                    distanceDisplay.innerText = "";
+                    // Exibe mensagem de erro na própria UI
+                    timeDisplay.classList.remove('text-green-400');
+                    timeDisplay.classList.add('text-red-400');
+                    timeDisplay.innerText = "Sem rota";
+                    distanceDisplay.innerText = "Local inacessível";
                 }
             } catch (error) { 
-                timeDisplay.innerText = "Erro ao calcular"; 
+                clearTimeout(timeoutId);
+                timeDisplay.classList.remove('text-green-400');
+                timeDisplay.classList.add('text-red-400'); // Fica vermelho para indicar falha
+                
+                if (error.name === 'AbortError') {
+                    timeDisplay.innerText = "Tempo esgotado";
+                    distanceDisplay.innerText = "Falha de rede";
+                } else {
+                    timeDisplay.innerText = "Erro ao calcular";
+                    distanceDisplay.innerText = "Tente novamente";
+                }
             }
         }
 
