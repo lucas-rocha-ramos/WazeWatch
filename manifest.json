@@ -1,0 +1,18 @@
+{
+"name": "WatchNav PWA",
+"short_name": "WatchNav",
+"description": "Aplicativo de navegação offline para smartwatches",
+"start_url": "./index.html",
+"display": "standalone",
+"background_color": "#1e1e1e",
+"theme_color": "#1e1e1e",
+"orientation": "portrait",
+"icons": [
+{
+"src": "https://www.google.com/search?q=https://cdn-icons-png.flaticon.com/512/854/854878.png",
+"sizes": "512x512",
+"type": "image/png",
+"purpose": "any maskable"
+}
+]
+}
