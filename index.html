@@ -16,7 +16,6 @@
     <style>
         body, html { margin: 0; padding: 0; height: 100%; background-color: #1e1e1e; color: white; overflow: hidden; font-family: sans-serif; }
         
-        /* Container do mapa maior para permitir rotação sem mostrar bordas vazias */
         #map-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; overflow: hidden; }
         #map { width: 150vw; height: 150vh; position: absolute; top: -25vh; left: -25vw; z-index: 1; transition: transform 0.5s ease-out; }
         
@@ -25,7 +24,6 @@
         .ui-layer { position: absolute; z-index: 1000; pointer-events: none; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: space-between; transition: opacity 0.3s; }
         .pointer-events-auto { pointer-events: auto; }
 
-        /* Marcador de Navegação (Seta) */
         .user-marker {
             width: 0; height: 0;
             border-left: 12px solid transparent;
@@ -45,12 +43,15 @@
 
         /* Ocultar UI dinâmica durante a direção */
         .driving-mode .hide-on-drive { display: none !important; }
+        .driving-mode #btnStartRoute { display: none !important; } /* Esconde o botão de iniciar depois que começou */
     </style>
 </head>
 <body class="">
 
+    <!-- UI Overlay -->
     <div class="ui-layer p-2" id="uiLayer">
         
+        <!-- Topo: Instrução Passo a Passo (Escondido por padrão) -->
         <div id="turnByTurnPanel" class="hidden glass-panel p-3 w-full mb-2 pointer-events-auto flex items-center gap-3 bg-blue-900/90 border-blue-500">
             <svg id="turnIcon" class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
             <div class="flex flex-col">
@@ -59,6 +60,7 @@
             </div>
         </div>
 
+        <!-- Barra de Pesquisa -->
         <div class="flex gap-2 w-full max-w-md mx-auto mb-2 pointer-events-auto relative hide-on-drive">
             <div class="relative w-full flex flex-col">
                 <input type="text" id="searchInput" placeholder="Para onde?" autocomplete="off" class="glass-panel w-full px-3 py-2 text-sm text-white placeholder-gray-400 outline-none focus:ring-2 focus:ring-blue-500">
@@ -72,6 +74,7 @@
             </button>
         </div>
 
+        <!-- Controles Secundários: Instalar e Download -->
         <div class="flex justify-between items-start pointer-events-auto hide-on-drive mb-2">
             <button id="btnInstall" class="hidden glass-panel px-3 py-1 bg-green-600/80 text-white text-xs font-bold rounded-full flex items-center gap-1 active:scale-95">
                 ↓ Instalar App
@@ -82,6 +85,7 @@
             </button>
         </div>
 
+        <!-- Status e Velocidade -->
         <div class="flex justify-between items-start pointer-events-auto mt-auto mb-2">
             <div class="glass-panel px-3 py-1 flex items-center gap-2">
                 <span id="speedDisplay" class="text-2xl font-bold text-blue-400">0</span>
@@ -93,6 +97,7 @@
             </div>
         </div>
 
+        <!-- Botões Centrais (Alerta Waze e Centralizar) -->
         <div class="flex justify-between pointer-events-auto mb-2">
             <button id="btnAlert" class="glass-panel p-3 rounded-full bg-orange-500/80 shadow-lg active:scale-95 transition-transform">
                 <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
@@ -103,6 +108,14 @@
             </button>
         </div>
 
+        <!-- NOVO: Botão Iniciar Rota -->
+        <div class="flex justify-center w-full pointer-events-auto mb-2">
+            <button id="btnStartRoute" class="hidden bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-full shadow-lg active:scale-95 transition-transform w-3/4 text-center">
+                INICIAR ROTA
+            </button>
+        </div>
+
+        <!-- Rodapé: Info da Rota -->
         <div id="routeInfoPanel" class="hidden glass-panel p-3 w-full pointer-events-auto flex flex-col gap-2">
             <div class="flex justify-between items-center">
                 <div class="flex flex-col">
@@ -120,14 +133,16 @@
         </div>
     </div>
 
+    <!-- Container do Mapa -->
     <div id="map-container">
         <div id="map"></div>
     </div>
 
+    <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 
     <script>
-        // 1. INSTALAÇÃO PWA (Add to Home Screen)
+        // 1. INSTALAÇÃO PWA
         let deferredPrompt;
         const btnInstall = document.getElementById('btnInstall');
         window.addEventListener('beforeinstallprompt', (e) => {
@@ -144,7 +159,6 @@
             }
         });
 
-        // Registro do Service Worker
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
         }
@@ -153,10 +167,12 @@
         let map, userMarker, destinationMarker, routeLayer;
         let userPos = null;
         let isMapLockedToUser = true;
-        let routeSteps = []; // Passos da rota (Turn-by-turn)
+        let routeSteps = [];
         let currentStepIndex = 0;
-        let wakeLock = null; // Para manter a tela ligada
+        let wakeLock = null;
         let lastSpokenInstruction = "";
+        let isNavigating = false; // Controle se o usuário apertou "Iniciar Rota"
+        let bestVoice = null; // Armazena a melhor voz encontrada
 
         // UI Elements
         const speedDisplay = document.getElementById('speedDisplay');
@@ -176,8 +192,8 @@
         const turnInstruction = document.getElementById('turnInstruction');
         const btnAlert = document.getElementById('btnAlert');
         const btnDownloadMap = document.getElementById('btnDownloadMap');
+        const btnStartRoute = document.getElementById('btnStartRoute'); // NOVO BOTÃO
 
-        // Inicializar Mapa
         function initMap() {
             map = L.map('map', { zoomControl: false, tap: true }).setView([-15.7801, -47.9292], 4); 
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19 }).addTo(map);
@@ -196,31 +212,95 @@
             });
         }
 
-        // 2. MANTER TELA LIGADA (Wake Lock)
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    console.log('Tela mantida ligada.');
                 }
-            } catch (err) { console.error('Erro no Wake Lock:', err); }
+            } catch (err) {}
         }
         function releaseWakeLock() {
             if (wakeLock !== null) { wakeLock.release(); wakeLock = null; }
         }
 
-        // 3. SÍNTESE DE VOZ (Falar a Rota)
+        // --- SISTEMA DE VOZ REALISTA (Web Speech API Otimizada) ---
+        function loadVoices() {
+            if ('speechSynthesis' in window) {
+                const voices = window.speechSynthesis.getVoices();
+                // Procura a melhor voz em Português do Brasil.
+                // Prioriza vozes do Google ou vozes "Premium/Enhanced" nativas do Android/iOS.
+                bestVoice = voices.find(v => v.lang.includes('pt-BR') && (v.name.includes('Google') || v.name.includes('Premium') || v.name.includes('Enhanced'))) 
+                            || voices.find(v => v.lang.includes('pt-BR')); 
+            }
+        }
+        // As vozes carregam de forma assíncrona em alguns navegadores
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.onvoiceschanged = loadVoices;
+            loadVoices();
+        }
+
         function speakInstruction(text) {
-            if (text === lastSpokenInstruction) return; // Evita repetir a mesma coisa
+            if (text === lastSpokenInstruction || !isNavigating) return; // Só fala se estiver navegando
             if ('speechSynthesis' in window) {
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.lang = 'pt-BR';
+                
+                // Aplica a melhor voz encontrada
+                if (bestVoice) {
+                    utterance.voice = bestVoice;
+                }
+                
+                // Ajustes finos para soar menos robótico
+                utterance.rate = 1.0; // Velocidade normal (1.0)
+                utterance.pitch = 1.0; // Tom normal (1.0)
+
                 window.speechSynthesis.speak(utterance);
                 lastSpokenInstruction = text;
             }
         }
 
-        // 4. RASTREAMENTO COM ROTAÇÃO E PASSOS
+        // Formata a instrução do OSRM para falar de forma mais natural
+        function formatInstructionToSpeak(step, distanceMeters) {
+            const modifierMap = {
+                'uturn': 'Faça um retorno',
+                'sharp right': 'Vire fechado à direita',
+                'right': 'Vire à direita',
+                'slight right': 'Mantenha-se à direita',
+                'straight': 'Siga em frente',
+                'slight left': 'Mantenha-se à esquerda',
+                'left': 'Vire à esquerda',
+                'sharp left': 'Vire fechado à esquerda'
+            };
+
+            const typeMap = {
+                'turn': modifierMap[step.maneuver.modifier] || 'Vire',
+                'new name': 'Continue em',
+                'depart': 'Siga em direção a',
+                'arrive': 'Você chegará ao seu destino',
+                'merge': 'Incorpore-se a',
+                'on ramp': 'Pegue a alça de acesso para',
+                'off ramp': 'Pegue a saída para',
+                'fork': modifierMap[step.maneuver.modifier] || 'Mantenha-se',
+                'end of road': 'No fim da rua, ' + (modifierMap[step.maneuver.modifier] || 'vire'),
+                'roundabout': 'Na rotatória, pegue a saída para'
+            };
+
+            let action = typeMap[step.maneuver.type] || 'Siga';
+            let streetName = step.name ? step.name : '';
+            
+            // Exemplo: "Em 100 metros, vire à direita na Avenida Paulista"
+            let spokenText = "";
+            if (distanceMeters > 0) {
+                 spokenText += `Em ${Math.round(distanceMeters)} metros, `;
+            }
+            spokenText += action;
+            if (streetName !== '') {
+                spokenText += ` em ${streetName}`;
+            }
+
+            return spokenText;
+        }
+
         function startTracking() {
             if (!navigator.geolocation) return startMessage.innerText = "GPS não suportado.";
 
@@ -231,50 +311,40 @@
                     const lat = position.coords.latitude;
                     const lng = position.coords.longitude;
                     const speed = position.coords.speed || 0; 
-                    const heading = position.coords.heading; // Direção (Bússola)
+                    const heading = position.coords.heading;
                     
                     userPos = L.latLng(lat, lng);
                     userMarker.setLatLng(userPos);
 
-                    // Velocidade
                     const speedKmh = Math.round(speed * 3.6);
                     speedDisplay.innerText = speedKmh;
 
-                    // Dinâmica de Tela: Se estiver rápido ou com rota, esconde UI
-                    if (speedKmh > 5 || routeLayer) {
-                        document.body.classList.add('driving-mode');
-                    } else if (!routeLayer) {
-                        document.body.classList.remove('driving-mode');
-                    }
-
-                    // ROTAÇÃO DO MAPA (Baseado na direção do GPS)
                     if (isMapLockedToUser) {
-                        map.setView(userPos, 17);
-                        if (heading !== null && heading !== NaN) {
-                            // Gira o container do mapa inteiro para dar efeito 3D/Bússola
+                        map.setView(userPos, 18); // Zoom bem próximo ao usuário
+                        if (heading !== null && heading !== NaN && isNavigating) {
                             document.getElementById('map').style.transform = `rotate(${-heading}deg)`;
-                            // Gira o marcador para sempre apontar "para cima" na tela
                             const markerEl = document.querySelector('.user-marker');
                             if(markerEl) markerEl.style.transform = `rotate(${heading}deg)`;
                         }
                     }
 
-                    // ATUALIZAR NAVEGAÇÃO PASSO A PASSO
-                    if (routeSteps.length > 0 && currentStepIndex < routeSteps.length) {
+                    // Lógica de Navegação Passo a Passo (Só funciona se o usuário apertou "Iniciar Rota")
+                    if (isNavigating && routeSteps.length > 0 && currentStepIndex < routeSteps.length) {
                         const nextStep = routeSteps[currentStepIndex];
                         const stepLatLng = L.latLng(nextStep.maneuver.location[1], nextStep.maneuver.location[0]);
-                        const distanceToNext = userPos.distanceTo(stepLatLng); // Distância em metros
+                        const distanceToNext = userPos.distanceTo(stepLatLng);
 
                         turnDistance.innerText = `${Math.round(distanceToNext)}m`;
                         turnInstruction.innerText = nextStep.name ? `Vire na ${nextStep.name}` : nextStep.maneuver.type;
 
-                        // Se estiver perto (ex: 50m), fala a instrução e pula pro próximo passo
+                        // Avisos Progressivos
                         if (distanceToNext < 50) {
-                            speakInstruction(turnInstruction.innerText);
-                            currentStepIndex++;
+                            speakInstruction(formatInstructionToSpeak(nextStep, 0));
+                            currentStepIndex++; // Pula para o próximo passo
                         } else if (distanceToNext < 200 && distanceToNext > 180) {
-                            // Alerta antecipado
-                            speakInstruction(`Em 200 metros, ${turnInstruction.innerText}`);
+                            speakInstruction(formatInstructionToSpeak(nextStep, 200));
+                        } else if (distanceToNext < 500 && distanceToNext > 480) {
+                            speakInstruction(formatInstructionToSpeak(nextStep, 500));
                         }
                     }
                 },
@@ -283,44 +353,43 @@
             );
         }
 
-        // 5. ROTAS COM TURN-BY-TURN (OSRM)
         async function setDestinationAndRoute(destLatLng) {
             if (destinationMarker) map.removeLayer(destinationMarker);
             if (routeLayer) map.removeLayer(routeLayer);
             routeSteps = [];
             currentStepIndex = 0;
             lastSpokenInstruction = "";
+            isNavigating = false; // Rota traçada, mas não iniciada ainda
+            document.body.classList.remove('driving-mode'); // Garante que a UI padrão apareça
 
             destinationMarker = L.marker(destLatLng).addTo(map);
-            isMapLockedToUser = false; // Permite ver a rota, depois o usuário centraliza
-            document.getElementById('map').style.transform = `rotate(0deg)`; // Reseta rotação ao ver visão geral
+            isMapLockedToUser = false;
+            document.getElementById('map').style.transform = `rotate(0deg)`;
 
             routeInfoPanel.classList.remove('hidden');
+            btnStartRoute.classList.remove('hidden'); // MOSTRA O BOTÃO INICIAR ROTA
+            turnByTurnPanel.classList.add('hidden'); // Esconde as instruções até iniciar
+
             timeDisplay.innerText = "Calculando...";
             distanceDisplay.innerText = "";
-            requestWakeLock(); // Inicia tela ligada
 
             try {
                 const start = `${userPos.lng},${userPos.lat}`;
                 const end = `${destLatLng.lng},${destLatLng.lat}`;
                 
-                // Parâmetro steps=true ativado para navegação passo a passo (turn-by-turn)
-                const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${start};${end}?overview=full&geometries=geojson&steps=true`);
+                // OSRM: language=pt adicionado para garantir que as instruções do backend venham em português
+                const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${start};${end}?overview=full&geometries=geojson&steps=true&language=pt`);
                 const data = await response.json();
 
                 if (data.routes && data.routes.length > 0) {
                     const route = data.routes[0];
                     routeLayer = L.geoJSON(route.geometry, { style: { color: '#3b82f6', weight: 8, opacity: 0.9 } }).addTo(map);
+                    
+                    // Visão Geral: Ajusta o mapa para mostrar a rota inteira
                     map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
 
-                    // Extrair Passos
                     routeSteps = route.legs[0].steps;
-                    if (routeSteps.length > 0) {
-                        turnByTurnPanel.classList.remove('hidden');
-                        speakInstruction("Rota calculada. Siga a rota indicada.");
-                    }
 
-                    // Atualizar UI
                     const distanceKm = (route.distance / 1000).toFixed(1);
                     const durationMin = Math.round(route.duration / 60);
                     distanceDisplay.innerText = `${distanceKm} km`;
@@ -329,10 +398,31 @@
             } catch (error) { timeDisplay.innerText = "Erro ao calcular"; }
         }
 
+        // NOVO: EVENTO BOTÃO INICIAR ROTA
+        btnStartRoute.addEventListener('click', () => {
+            if (!userPos || routeSteps.length === 0) return;
+            
+            isNavigating = true; // Inicia a navegação ativa
+            document.body.classList.add('driving-mode'); // Esconde a barra de pesquisa
+            btnStartRoute.classList.add('hidden'); // Esconde o botão Iniciar
+            turnByTurnPanel.classList.remove('hidden'); // Mostra o painel azul de instruções
+
+            // Zoom máximo no usuário e trava a câmera
+            map.setView(userPos, 18);
+            isMapLockedToUser = true;
+            
+            requestWakeLock(); // Mantém a tela ligada
+            
+            // Falar instrução inicial
+            if (routeSteps.length > 0) {
+                 speakInstruction("Iniciando rota. " + formatInstructionToSpeak(routeSteps[0], 0));
+            }
+        });
+
         // Eventos dos Botões de Controle
         btnCenter.addEventListener('click', () => {
             if (userPos) {
-                map.setView(userPos, 17);
+                map.setView(userPos, 18); // Zoom de navegação
                 isMapLockedToUser = true;
                 btnCenter.classList.add('hidden');
             }
@@ -341,47 +431,38 @@
         btnCancelRoute.addEventListener('click', () => {
             if (destinationMarker) map.removeLayer(destinationMarker);
             if (routeLayer) map.removeLayer(routeLayer);
+            
             routeInfoPanel.classList.add('hidden');
             turnByTurnPanel.classList.add('hidden');
-            document.body.classList.remove('driving-mode');
+            btnStartRoute.classList.add('hidden'); // Esconde o Iniciar Rota
+            document.body.classList.remove('driving-mode'); // Volta UI normal
+            
             routeSteps = [];
-            document.getElementById('map').style.transform = `rotate(0deg)`; // Reseta rotação
+            isNavigating = false;
+            document.getElementById('map').style.transform = `rotate(0deg)`;
             releaseWakeLock();
+            
             if (userPos) { map.setView(userPos, 16); isMapLockedToUser = true; }
         });
 
         // 6. ALERTAS COLABORATIVOS (Waze Local)
         btnAlert.addEventListener('click', () => {
             if(!userPos) return;
-            // Cria um marcador vermelho de "Alerta/Perigo"
-            const alertIcon = L.divIcon({
-                className: 'custom-alert',
-                html: '⚠️',
-                iconSize: [24, 24],
-                iconAnchor: [12, 12]
-            });
-            L.marker([userPos.lat, userPos.lng], {icon: alertIcon}).addTo(map)
-             .bindPopup("Alerta reportado!").openPopup();
-            
-            speakInstruction("Alerta registrado no mapa.");
+            const alertIcon = L.divIcon({ className: 'custom-alert', html: '⚠️', iconSize: [24, 24], iconAnchor: [12, 12] });
+            L.marker([userPos.lat, userPos.lng], {icon: alertIcon}).addTo(map).bindPopup("Alerta reportado!").openPopup();
         });
 
-        // 7. DOWNLOAD DE MAPA OFFLINE (Tile Caching)
+        // 7. DOWNLOAD DE MAPA OFFLINE
         btnDownloadMap.addEventListener('click', async () => {
             if (!userPos) return alert("Aguarde o GPS.");
             const btn = btnDownloadMap;
             const originalText = btn.innerHTML;
             btn.innerHTML = "Baixando 5km...";
             
-            // Simula o download forçando o navegador a carregar os blocos do mapa em volta
-            const bounds = userPos.toBounds(5000); // Raio de 5km
-            const zoomLevels = [14, 15, 16]; // Níveis cruciais de zoom
-            
-            // Um truque em PWAs: passeamos o mapa rapidamente de forma invisível para o Service Worker engolir os arquivos
+            const bounds = userPos.toBounds(5000);
             const originalZoom = map.getZoom();
             isMapLockedToUser = false;
 
-            // Faz um fitBounds na área, o Service Worker atual vai interceptar e salvar
             map.fitBounds(bounds);
             
             setTimeout(() => {
@@ -392,7 +473,6 @@
             }, 2000);
         });
 
-        // Autocomplete e Pesquisa (Mantidos intactos da sua versão)
         let searchTimeout;
         searchInput.addEventListener('input', (e) => {
             const query = e.target.value;
@@ -442,7 +522,6 @@
             } catch (error) { startMessage.innerText = "Erro."; setTimeout(() => startMessage.classList.add('hidden'), 3000); }
         }
 
-        // Voz (Mantido intacto)
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognition) {
             const recognition = new SpeechRecognition();
@@ -455,12 +534,10 @@
         btnSearch.addEventListener('click', () => geocodeAndRoute(searchInput.value));
         searchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') geocodeAndRoute(searchInput.value); });
 
-        // Offline events
         window.addEventListener('offline', () => offlineIndicator.classList.remove('hidden'));
         window.addEventListener('online', () => offlineIndicator.classList.add('hidden'));
         if (!navigator.onLine) offlineIndicator.classList.remove('hidden');
 
-        // Start
         initMap();
         startTracking();
 
